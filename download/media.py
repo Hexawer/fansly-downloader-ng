@@ -20,70 +20,45 @@ from textio import print_info, print_warning
 from utils.common import batch_list
 
 
-import time
-import random
-import requests
-
 def download_media_infos(
-        config: FanslyConfig,
-        media_ids: list[str]
-    ) -> list[dict]:
+            config: FanslyConfig,
+            media_ids: list[str]
+        ) -> list[dict]:
 
     media_infos: list[dict] = []
 
-    # жёстко ограничиваем пачки до 10, Fansly больше не даёт
-    SAFE_BATCH = 10
+    for ids in batch_list(media_ids, config.BATCH_SIZE):
+        media_ids_str = ','.join(ids)
 
-    def chunk_list(lst, size):
-        for i in range(0, len(lst), size):
-            return lst[i:i + size]
+        media_info_response = config.get_api() \
+            .get_account_media(media_ids_str)
 
-    for ids in chunk_list(media_ids, SAFE_BATCH):
-        media_ids_str = ",".join(ids)
+        media_info_response.raise_for_status()
 
-        # retry механизм при 429
-        for attempt in range(5):
-            try:
-                media_info_response = config.get_api().get_account_media(media_ids_str)
+        if media_info_response.status_code == 200:
+            media_info = media_info_response.json()
 
-                # если получил 429 — ждём и повторяем
-                if media_info_response.status_code == 429:
-                    wait = 3 + attempt * 2
-                    print(f"[!] Got 429, waiting {wait} sec before retry...")
-                    time.sleep(wait)
-                    continue
+            if not media_info['success']:
+                raise ApiError(
+                    f"Could not retrieve media info for {media_ids_str} due to an "
+                    f"API error - unsuccessful "
+                    f"| content: \n{media_info}"
+                )
 
-                media_info_response.raise_for_status()
-                break  # успех, из retry-цикла выходим
+            for info in media_info['response']:
+                media_infos.append(info)
 
-            except requests.HTTPError as e:
-                if media_info_response.status_code == 429:
-                    # уже обработано выше
-                    continue
-                else:
-                    raise e
-
-        # если после 5 попыток не вышли — провал
-        if media_info_response.status_code == 429:
-            raise Exception("Failed after retries — still 429")
-
-        # успешный ответ
-        media_info = media_info_response.json()
-
-        if not media_info["success"]:
-            raise ApiError(
-                f"Could not retrieve media info for {media_ids_str} "
-                f"due to API error.\nResponse:\n{media_info}"
+        else:
+            raise DownloadError(
+                f"Could not retrieve media info for {media_ids_str} due to an "
+                f"error --> status_code: {media_info_response.status_code} "
+                f"| content: \n{media_info_response.content.decode('utf-8')}"
             )
 
-        for info in media_info["response"]:
-            media_infos.append(info)
-
-        # задержка для избежания rate-limit
-        time.sleep(random.uniform(0.8, 1.5))
+        # Slow down a bit to be sure
+        sleep(random.uniform(0.4, 0.75))
 
     return media_infos
-
 
 
 def download_media(config: FanslyConfig, state: DownloadState, accessible_media: list[MediaItem]):
@@ -238,4 +213,4 @@ def download_media(config: FanslyConfig, state: DownloadState, accessible_media:
             print_warning(f'Skipping invalid item: {ex}')
 
         # Slow down a bit to be sure
-        sleep(random.uniform(1.2, 2.2))
+        sleep(random.uniform(0.4, 0.75))
