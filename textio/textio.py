@@ -1,33 +1,23 @@
 """Console Output"""
 
-
 import os
 import platform
 import subprocess
 import sys
 
-from functools import partialmethod
 from loguru import logger
 from pathlib import Path
 from time import sleep
 
-
 LOG_FILE_NAME: str = 'fansly_downloader_ng.log'
 
+# --- Настройка только кастомных уровней ---
+logger.level("Config", no=25, color="<light-magenta>")
+logger.level("Updater", no=26, color="<light-green>")
+logger.level("lnfo", no=21, color="<light-red>")  # если нужен отдельный
 
-# most of the time, we utilize this to display colored output rather than logging or prints
-def output(level: int, log_type: str, color: str, message: str) -> None:
-    try:
-        logger.level(log_type, no = level, color = color)
-
-    except TypeError:
-        # level failsafe
-        pass 
-
-    logger.__class__.type = partialmethod(logger.__class__.log, log_type)
-
+def output(log_type: str, message: str) -> None:
     logger.remove()
-
     logger.add(
         sys.stdout,
         format="<level>{level}</level> | <white>{time:HH:mm}</white> <level>|</level><light-white>| {message}</light-white>",
@@ -36,88 +26,61 @@ def output(level: int, log_type: str, color: str, message: str) -> None:
     logger.add(
         Path.cwd() / LOG_FILE_NAME,
         encoding='utf-8',
-        format="[{level} ] [{time:YYYY-MM-DD} | {time:HH:mm}]: {message}",
+        format="[{level}] [{time:YYYY-MM-DD} | {time:HH:mm}]: {message}",
         level=log_type,
         rotation='1MB',
         retention=5,
     )
+    logger.log(log_type, message)
 
-    logger.type(message)
-
-
+# --- Обёртки ---
 def print_config(message: str) -> None:
-    output(5, ' Config', '<light-magenta>', message)
-
+    output('Config', message)
 
 def print_debug(message: str) -> None:
-    output(7,' DEBUG', '<light-red>', message)
-
+    output('DEBUG', message)
 
 def print_error(message: str, number: int=-1) -> None:
     if number >= 0:
-        output(2, f' [{number}]ERROR', '<red>', message)
+        output(f'[{number}]ERROR', message)
     else:
-        output(2, ' ERROR', '<red>', message)
-
+        output('ERROR', message)
 
 def print_info(message: str) -> None:
-    output(1, ' Info', '<light-blue>', message)
-
+    output('INFO', message)
 
 def print_info_highlight(message: str) -> None:
-    output(4, ' lnfo', '<light-red>', message)
-
+    output('lnfo', message)
 
 def print_update(message: str) -> None:
-    output(6,' Updater', '<light-green>', message)
-
+    output('Updater', message)
 
 def print_warning(message: str) -> None:
-    output(3, ' WARNING', '<yellow>', message)
+    output('WARNING', message)
 
-
+# --- Вспомогательные ---
 def input_enter_close(interactive: bool) -> None:
-    """Asks user for <ENTER> to close and exits the program.
-    In non-interactive mode sleeps instead, then exits.
-    """
     if interactive:
         input('\nPress <ENTER> to close ...')
-
     else:
         print('\nExiting in 15 seconds ...')
         sleep(15)
-
     sys.exit()
 
-
 def input_enter_continue(interactive: bool) -> None:
-    """Asks user for <ENTER> to continue.
-    In non-interactive mode sleeps instead.
-    """
     if interactive:
         input('\nPress <ENTER> to attempt to continue ...')
     else:
         print('\nContinuing in 15 seconds ...')
         sleep(15)
 
-
-# clear the terminal based on the operating system
 def clear_terminal() -> None:
     system = platform.system()
+    os.system('cls' if system == 'Windows' else 'clear')
 
-    if system == 'Windows':
-        os.system('cls')
-
-    else: # Linux & macOS
-        os.system('clear')
-
-
-# cross-platform compatible, re-name downloaders terminal output window title
 def set_window_title(title) -> None:
     current_platform = platform.system()
-
     if current_platform == 'Windows':
-        subprocess.call('title {}'.format(title), shell=True)
-
-    elif current_platform == 'Linux' or current_platform == 'Darwin':
+        subprocess.call(f'title {title}', shell=True)
+    elif current_platform in ('Linux', 'Darwin'):
         subprocess.call(['printf', r'\33]0;{}\a'.format(title)])
