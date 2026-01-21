@@ -42,7 +42,7 @@ def print_debug(message: str) -> None:
 
 def print_error(message: str, number: int=-1) -> None:
     if number >= 0:
-        output(f'[{number}]ERROR', message)
+        output('ERROR', f"[{number}] {message}")
     else:
         output('ERROR', message)
 
