@@ -2,6 +2,7 @@
 
 
 import random
+from email.utils import parsedate_to_datetime
 
 from rich.progress import Progress, BarColumn, TextColumn
 from rich.table import Column
@@ -20,6 +21,26 @@ from textio import print_info, print_warning
 from utils.common import batch_list
 
 
+def _get_retry_after_seconds(retry_after: str | None, fallback: float) -> float:
+    """Parses Retry-After header as seconds or HTTP date; returns fallback on failure."""
+    if retry_after is None:
+        return fallback
+
+    retry_after = retry_after.strip()
+
+    if retry_after.isdigit():
+        return float(max(1, int(retry_after)))
+
+    try:
+        retry_after_dt = parsedate_to_datetime(retry_after)
+        now = retry_after_dt.now(retry_after_dt.tzinfo)
+        delta_seconds = (retry_after_dt - now).total_seconds()
+        return float(max(1.0, delta_seconds))
+
+    except Exception:
+        return fallback
+
+
 def download_media_infos(
             config: FanslyConfig,
             media_ids: list[str]
@@ -28,35 +49,80 @@ def download_media_infos(
     media_infos: list[dict] = []
 
     for ids in batch_list(media_ids, config.BATCH_SIZE):
-        media_ids_str = ','.join(ids)
+        pending_batches: list[list[str]] = [ids]
 
-        media_info_response = config.get_api() \
-            .get_account_media(media_ids_str)
+        while pending_batches:
+            current_batch = pending_batches.pop(0)
+            media_ids_str = ','.join(current_batch)
+            retry_count = 0
 
-        media_info_response.raise_for_status()
+            while True:
+                media_info_response = config.get_api().get_account_media(media_ids_str)
 
-        if media_info_response.status_code == 200:
-            media_info = media_info_response.json()
+                if media_info_response.status_code == 429:
+                    if retry_count < config.timeline_retries:
+                        base_wait = float(config.timeline_delay_seconds)
+                        retry_after = media_info_response.headers.get('Retry-After')
+                        retry_after_seconds = _get_retry_after_seconds(retry_after, base_wait)
+                        jitter = random.uniform(0.2, 1.0)
+                        wait_seconds = retry_after_seconds + jitter + retry_count
 
-            if not media_info['success']:
-                raise ApiError(
-                    f"Could not retrieve media info for {media_ids_str} due to an "
-                    f"API error - unsuccessful "
-                    f"| content: \n{media_info}"
-                )
+                        print_warning(
+                            f"Rate-limit on media batch ({len(current_batch)} IDs). "
+                            f"Retry {retry_count + 1}/{config.timeline_retries} in {wait_seconds:.1f}s ..."
+                        )
+                        sleep(wait_seconds)
+                        retry_count += 1
+                        continue
 
-            for info in media_info['response']:
-                media_infos.append(info)
+                    # If the batch is too large for current rate limits, split and retry in smaller chunks.
+                    if len(current_batch) > 1:
+                        middle = len(current_batch) // 2
+                        first_half = current_batch[:middle]
+                        second_half = current_batch[middle:]
 
-        else:
-            raise DownloadError(
-                f"Could not retrieve media info for {media_ids_str} due to an "
-                f"error --> status_code: {media_info_response.status_code} "
-                f"| content: \n{media_info_response.content.decode('utf-8')}"
-            )
+                        if first_half:
+                            pending_batches.insert(0, first_half)
+                        if second_half:
+                            pending_batches.insert(1 if first_half else 0, second_half)
 
-        # Slow down a bit to be sure
-        sleep(random.uniform(0.4, 0.75))
+                        print_warning(
+                            f"Media batch of {len(current_batch)} IDs still rate-limited after retries; "
+                            f"retrying as {len(first_half)} + {len(second_half)} IDs."
+                        )
+                        sleep(random.uniform(1.0, 2.0))
+                        break
+
+                    print_warning(
+                        f"Skipping media ID {current_batch[0]} due to persistent 429 after retries."
+                    )
+                    break
+
+                media_info_response.raise_for_status()
+
+                if media_info_response.status_code == 200:
+                    media_info = media_info_response.json()
+
+                    if not media_info['success']:
+                        raise ApiError(
+                            f"Could not retrieve media info for {media_ids_str} due to an "
+                            f"API error - unsuccessful "
+                            f"| content: \n{media_info}"
+                        )
+
+                    for info in media_info['response']:
+                        media_infos.append(info)
+
+                else:
+                    raise DownloadError(
+                        f"Could not retrieve media info for {media_ids_str} due to an "
+                        f"error --> status_code: {media_info_response.status_code} "
+                        f"| content: \n{media_info_response.content.decode('utf-8')}"
+                    )
+
+                # Slow down a bit to be sure
+                sleep(random.uniform(0.4, 0.75))
+                break
 
     return media_infos
 
