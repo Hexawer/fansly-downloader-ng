@@ -3,11 +3,11 @@
 
 from .common import process_download_accessible_media
 from .downloadstate import DownloadState
+from .media import download_media_infos
 from .types import DownloadType
 
 from config import FanslyConfig
 from textio import input_enter_continue, print_error, print_info
-from utils.common import batch_list
 
 
 def download_collections(config: FanslyConfig, state: DownloadState):
@@ -26,29 +26,9 @@ def download_collections(config: FanslyConfig, state: DownloadState):
         collections = collections_response.json()
         account_media_orders = collections['response']['accountMediaOrders']
         account_media_ids = [order['accountMediaId'] for order in account_media_orders]
-  
-        # Splitting the list into batches and making separate API calls for each
-        for batch in batch_list(account_media_ids, config.BATCH_SIZE):
 
-            batched_ids = ','.join(batch)
-
-            media_info_response = config.get_api() \
-                .get_account_media(batched_ids)
-
-            if media_info_response.status_code == 200:
-                media_info = media_info_response.json()['response']
-    
-                process_download_accessible_media(config, state, media_info)
-            
-            else:
-                print_error(
-                    f"Media batch download failed. Response code: "
-                    f"{media_info_response.status_code}"
-                    f"\n{media_info_response.text}"
-                    f"\n\nAffected media IDs: {batched_ids}",
-                    23
-                )
-                input_enter_continue(config.interactive)
+        media_info = download_media_infos(config, account_media_ids)
+        process_download_accessible_media(config, state, media_info)
 
         if state.duplicate_count > 0 and config.show_downloads and not config.show_skipped_downloads:
             print_info(

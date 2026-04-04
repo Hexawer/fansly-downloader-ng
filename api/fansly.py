@@ -160,8 +160,8 @@ class FanslyApi(object):
     def get_with_ngsw(
                 self,
                 url: str,
-                params: dict[str, str]={},
-                cookies: dict[str, str]={},
+                params: Optional[dict[str, str]]=None,
+                cookies: Optional[dict[str, str]]=None,
                 stream: bool=False,
                 add_fansly_headers: bool=True,
                 alternate_token: Optional[str]=None,
@@ -173,10 +173,13 @@ class FanslyApi(object):
 
         existing_params = get_flat_qs_dict(url)
 
+        safe_params = params or {}
+        safe_cookies = cookies or {}
+
         request_params = {
             **existing_params,
             **default_params,
-            **params,
+            **safe_params,
         }
 
         headers=self.get_http_headers(
@@ -185,7 +188,11 @@ class FanslyApi(object):
             alternate_token=alternate_token,
         )
 
-        self.cors_options_request(url)
+        try:
+            self.cors_options_request(url)
+        except requests.RequestException:
+            # Preflight failure is non-fatal for this CLI context.
+            pass
 
         (_, file_url) = split_url(url)
 
@@ -196,8 +203,8 @@ class FanslyApi(object):
             'stream': stream,
         }
 
-        if len(cookies) > 0:
-            arguments['cookies'] = cookies
+        if len(safe_cookies) > 0:
+            arguments['cookies'] = safe_cookies
 
         return self.http_session.get(**arguments)
 

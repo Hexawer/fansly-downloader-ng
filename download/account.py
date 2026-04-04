@@ -38,6 +38,32 @@ def get_creator_account_info(config: FanslyConfig, state: DownloadState) -> None
             raw_response = config.get_api() \
                 .get_creator_account_info(state.creator_name)
 
+            if raw_response.status_code != 200:
+                if raw_response.status_code == 401:
+                    message = \
+                        f"API returned unauthorized (24). " \
+                        f"This is most likely because of a wrong authorization " \
+                        f"token in the configuration file." \
+                        f"\n{21*' '}Have you surfed Fansly on this browser recently?" \
+                        f"\n{21*' '}Used authorization token: '{config.token}'" \
+                        f'\n  {raw_response.text}'
+
+                    raise ApiAuthenticationError(message)
+
+                if raw_response.status_code == 429:
+                    message = \
+                        'Fansly API rate-limit reached while getting account info (25). ' \
+                        'Please retry in a moment or increase delay settings.' \
+                        f'\n  {raw_response.text}'
+
+                    raise ApiError(message)
+
+                message = \
+                    'Bad response from fansly API (25). Please make sure your configuration file is not malformed.' \
+                    f'\n  status: {raw_response.status_code}\n  {raw_response.text}'
+
+                raise ApiError(message)
+
             account = raw_response.json()['response'][0]
 
             state.creator_id = account['id']
